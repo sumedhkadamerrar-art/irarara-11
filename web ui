@@ -1,0 +1,165 @@
+import os
+import re
+import json
+
+from fastapi import FastAPI
+
+# Comprehensive token patterns with specific key signature handling
+TOKEN_SPECIFICATION = [
+    ('COMMENT',   r'#.*'),
+    ('KEYWORD',   r'\b(ai_agent|ai_model|llmv|vllm|llm|ai|web_app|ui_architecture|api_server|api|domain_name|server)\b'),
+    ('EMAIL_OP',  r'@'),
+    ('DOM_OP',    r'\.'),
+    ('ASSIGN',    r'='),
+    ('LBRACE',    r'\{'),
+    ('RBRACE',    r'\}'),
+    ('COMMA',     r','),
+    ('NUMBER',    r'\d+'),
+    ('STRIPE_KEY', r'\bpk_live_[a-zA-Z0-9]+\b'),
+    ('IDENTIFIER', r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'),
+    ('WS',        r'\s+'),
+]
+
+
+class IrArraBillingCompiler:
+    def __init__(self, code_text):
+        self.code = code_text
+        self.tokens = []
+        self.pos = 0
+
+    def tokenize(self):
+        cursor = 0
+        while cursor < len(self.code):
+            matched = False
+            for token_type, pattern in TOKEN_SPECIFICATION:
+                regex = re.compile(pattern)
+                match = regex.match(self.code, cursor)
+                if match:
+                    text = match.group(0)
+                    if token_type not in ['WS', 'COMMENT']:
+                        self.tokens.append((token_type, text))
+                    cursor = match.end()
+                    matched = True
+                    break
+            if not matched:
+                raise SyntaxError(
+                    f"Lexer Error: Illegal character token mapping sequence at pattern structure position: {cursor}"
+                )
+        return self.tokens
+
+    def peek(self):
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+
+    def consume(self, expected_type=None):
+        token = self.peek()
+        if not token:
+            raise SyntaxError("Parser Error: Unexpected end of program string.")
+        if expected_type and token[0] != expected_type:
+            raise SyntaxError(f"Parser Error: Expected {expected_type}, encountered {token}")
+        self.pos += 1
+        return token[1]
+
+    def parse_expression(self):
+        if self.peek() and self.peek()[0] == 'STRIPE_KEY':
+            val = self.consume('STRIPE_KEY')
+            return {"type": "secure_public_token", "value": val}
+
+        parts = [self.consume('IDENTIFIER')]
+        while self.peek() and self.peek()[0] in ['DOM_OP', 'EMAIL_OP']:
+            op = self.consume()
+            next_part = self.consume('IDENTIFIER')
+            parts.append(op + next_part)
+
+        full_str = "".join(parts)
+        return {"type": "mail_routing" if '@' in full_str else "domain_namespace", "value": full_str}
+
+    def parse_properties(self):
+        props = {}
+        while self.peek() and self.peek()[0] != 'RBRACE':
+            key = self.consume('IDENTIFIER')
+            self.consume('ASSIGN')
+            val = self.consume('NUMBER')
+            props[key] = int(val)
+            if self.peek() and self.peek()[0] == 'COMMA':
+                self.consume('COMMA')
+        return props
+
+    def compile(self):
+        self.tokenize()
+        manifest = {"ir_type": "IrArra_Commerce_Manifest", "compiled_modules": []}
+
+        while self.peek():
+            kw = self.consume('KEYWORD')
+            identifier = self.consume('IDENTIFIER')
+
+            if self.peek() and self.peek()[0] == 'ASSIGN':
+                self.consume('ASSIGN')
+                expr_data = self.parse_expression()
+                manifest["compiled_modules"].append({
+                    "ir_node": "InfrastructureBinding",
+                    "primitive": kw,
+                    "id": identifier,
+                    "resolution": expr_data
+                })
+            elif self.peek() and self.peek()[0] == 'LBRACE':
+                self.consume('LBRACE')
+                attributes = self.parse_properties()
+                self.consume('RBRACE')
+                manifest["compiled_modules"].append({
+                    "ir_node": "FeatureControlMatrix",
+                    "primitive": kw,
+                    "id": identifier,
+                    "settings": attributes
+                })
+        return manifest
+
+
+def build_source_stream() -> str:
+    """
+    Pulls the previously hardcoded config values from environment variables
+    instead of baking them into source. Set these in the Render dashboard
+    under your service's Environment tab.
+    """
+    billing_domain = os.environ.get("BILLING_DOMAIN", "checkout.example.com")
+    stripe_pk = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_live_placeholder")
+    merchant_email = os.environ.get("MERCHANT_EMAIL", "merchant@example.com")
+
+    free_tier_tokens = os.environ.get("TIER_FREE_TOKENS", "50000")
+    pro_monthly_usd = os.environ.get("TIER_PRO_MONTHLY_USD", "29")
+    enterprise_usd = os.environ.get("TIER_ENTERPRISE_USD", "499")
+
+    return f"""
+domain_name billing_domain = {billing_domain}
+api stripe_service = {stripe_pk}
+server gateway_operator = {merchant_email}
+
+web_app authentication_tier {{
+    sign_in_oauth = 1,
+    sign_up_email = 1,
+    multi_factor_auth = 1,
+    session_expiry_hours = 24
+}}
+
+ui_architecture pricing_matrix {{
+    tier_free_tier_tokens = {free_tier_tokens},
+    tier_pro_monthly_usd = {pro_monthly_usd},
+    tier_enterprise_usd = {enterprise_usd},
+    payment_options_stripe = 1,
+    payment_options_apple_pay = 1
+}}
+"""
+
+
+app = FastAPI(title="IrArra Billing Compiler")
+
+
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/compile")
+def run_compile():
+    source_stream = build_source_stream()
+    compiler = IrArraBillingCompiler(source_stream)
+    return compiler.compile()
