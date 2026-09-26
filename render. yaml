@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: irarara-billing-compiler
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: BILLING_DOMAIN
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: MERCHANT_EMAIL
+        sync: false
+      - key: TIER_FREE_TOKENS
+        value: "50000"
+      - key: TIER_PRO_MONTHLY_USD
+        value: "29"
+      - key: TIER_ENTERPRISE_USD
+        value: "499"
